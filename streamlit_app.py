@@ -1,81 +1,69 @@
-# streamlit_app.py
 import streamlit as st
 import pandas as pd
 import folium
 from folium.plugins import MarkerCluster
 from streamlit_folium import st_folium
+import matplotlib.font_manager as fm
+import os
+import urllib.request
 
-st.set_page_config(layout="wide", page_title="진주시 CCTV 현황")
-st.title("🗺 부산광역시 CCTV 현황")
+# ✅ 한글 폰트 설정 (폰트는 지도에 직접 쓰이진 않지만 안전용)
+def set_korean_font():
+    font_path = "NanumGothic.ttf"
+    if not os.path.exists(font_path):
+        try:
+            url = "https://github.com/naver/nanumfont/blob/master/ttf/NanumGothic.ttf?raw=true"
+            urllib.request.urlretrieve(url, font_path)
+        except Exception as e:
+            st.warning(f"폰트 다운로드 실패: {e}")
+            return
+    fm.fontManager.addfont(font_path)
 
-# 1) 엑셀 읽기
-df = pd.read_excel("12_04_08_E_CCTV정보.xlsx", engine="openpyxl")
+# ✅ CCTV 데이터 로드
+@st.cache_data
+def load_cctv_data():
+    df = pd.read_excel("12_04_08_E_CCTV정보.xlsx", engine="openpyxl")
+    cols = df.columns.tolist()
+    find = lambda kw: next((c for c in cols if kw in c), None)
+    df = df.rename(columns={
+        find("설치목적"): "목적",
+        find("도로명주소"): "설치장소",
+        find("위도"): "위도",
+        find("경도"): "경도",
+        find("설치연"): "설치연도",
+        find("카메라대수"): "대수"
+    })
+    return df.dropna(subset=["위도", "경도"])
 
-# 2) 컬럼 자동 탐색
-cols = df.columns.tolist()
-find = lambda kw: next((c for c in cols if kw in c), None)
+# ✅ 지도 시각화 함수
+def show_cctv_map():
+    st.set_page_config(layout="wide")
+    st.title("📍 CCTV 위치 지도")
 
-purpose_col = find("설치목적")       # e.g. "설치목적구분"
-address_col = find("도로명주소")      # e.g. "소재지도로명주소"
-lat_col     = find("위도")            # e.g. "WGS84위도"
-lon_col     = find("경도")            # e.g. "WGS84경도"
-year_col    = find("설치연")          # e.g. "설치연월"
-count_col   = find("카메라대수")      # e.g. "카메라대수"
+    set_korean_font()
+    df = load_cctv_data()
+    df_sample = df.sample(frac=0.3, random_state=42)  # 30% 샘플만 표시
 
-# 3) 필수 컬럼 누락 체크
-missing = [name for name,var in [
-    ("설치목적",purpose_col),
-    ("도로명주소",address_col),
-    ("위도",lat_col),
-    ("경도",lon_col),
-    ("설치연월",year_col),
-    ("카메라대수",count_col),
-] if var is None]
-if missing:
-    st.error(f"다음 키워드를 포함하는 컬럼을 찾을 수 없습니다: {missing}")
-    st.write("현재 컬럼명:", cols)
-    st.stop()
-
-# 4) 보기 편하게 간소화
-df_vis = df.rename(columns={
-    purpose_col: "목적",
-    address_col:"설치장소",
-    lat_col:    "위도",
-    lon_col:    "경도",
-    year_col:   "설치연도",
-    count_col:  "대수",
-})
-
-# (선택) 위경도 누락 행 제거
-df_vis = df_vis.dropna(subset=["위도","경도"])
-
-# 5) 데이터 테이블
-st.subheader("▶ CCTV 데이터 ")
-st.dataframe(
-    df_vis[["목적","설치장소","위도","경도","설치연도","대수"]],
-    use_container_width=True
-)
-
-# 6) 지도 생성 & 클러스터링
-m = folium.Map(
-    location=[df_vis["위도"].mean(), df_vis["경도"].mean()],
-    zoom_start=11,
-    tiles="OpenStreetMap"
-)
-marker_cluster = MarkerCluster().add_to(m)
-
-for _, row in df_vis.iterrows():
-    popup = (
-        f"<b>목적:</b> {row['목적']}<br>"
-        f"<b>장소:</b> {row['설치장소']}<br>"
-        f"<b>연도:</b> {row['설치연도']}<br>"
-        f"<b>대수:</b> {row['대수']}"
+    m = folium.Map(
+        location=[df_sample["위도"].mean(), df_sample["경도"].mean()],
+        zoom_start=11,
+        tiles="CartoDB positron"
     )
-    folium.Marker(
-        location=[row["위도"], row["경도"]],
-        popup=folium.Popup(popup, max_width=300)
-    ).add_to(marker_cluster)
 
-# 7) Streamlit에 출력
-st.subheader("▶ CCTV 위치 분포도")
-st_folium(m, width=900, height=600)
+    marker_cluster = MarkerCluster().add_to(m)
+    for _, row in df_sample.iterrows():
+        popup = (
+            f"<b>목적:</b> {row['목적']}<br>"
+            f"<b>장소:</b> {row['설치장소']}<br>"
+            f"<b>연도:</b> {row['설치연도']}<br>"
+            f"<b>대수:</b> {row['대수']}"
+        )
+        folium.Marker(
+            location=[row["위도"], row["경도"]],
+            popup=folium.Popup(popup, max_width=300)
+        ).add_to(marker_cluster)
+
+    st_folium(m, width=900, height=600)
+
+# ✅ 실행
+show_cctv_map()
